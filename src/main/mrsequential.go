@@ -66,6 +66,9 @@ func main() {
 	// reduce list(k2, v2) -> a small list(v2) for Immediate key I
 	// and print the result to mr-out-0.
 	//
+	// The reduce worker iterates over the sorted interme- diate data and for each unique intermediate key en- countered,
+	// it passes the key and the corresponding set of intermediate values to the user’s Reduce function.
+	// The output of the Reduce function is appended to a final output file for this reduce partition.
 	i := 0
 	for i < len(intermediate) {
 		j := i + 1

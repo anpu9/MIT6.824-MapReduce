@@ -15,12 +15,26 @@ type Master struct {
 		for each completed map task,
 		the master stores the locations and sizes of the R intermediate file regions produced by the map task
 	*/
-	MapTasks    []string // len = nMap + nReduce
-	ReduceTasks []string // len = nMap + nReduce
-	State       []string
-	Identity    []string
+	MapTasks    []MapTask    // len = nMap
+	ReduceTasks []ReduceTask // len = nReduce
 	nMap        int
 	nReduce     int
+}
+type Task struct {
+	State    string
+	Identity string
+}
+type MapTask struct {
+	Task     Task
+	Filename string
+}
+type ReduceTask struct {
+	Task      Task
+	Partition Partition
+}
+type Partition struct {
+	Location string
+	Size     int
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -31,15 +45,33 @@ type Master struct {
 // the RPC argument and reply types are defined in rpc.go.
 //
 func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Index = args.X + 1
+	reply.Y = args.X + 1
 	return nil
 }
-func (m *Master) TaskFinder(args *ExampleArgs, reply *ExampleReply) error {
+func (m *Master) TaskFinder(args *Args, reply *Reply) error {
 	// 1. check if there is any map task
-	// 2. if so, return the filename and index
-	// 3. if not, find any reduce tasks
-	// 4. if so,
-	reply.Index = args.X + 1
+	var isAssign = false
+
+	for _, task := range m.MapTasks {
+		// 2. if so, return the filename and index
+		if task.Task.State == "idle" {
+			task.Task.State = "in-progress"
+			task.Task.Identity = "map"
+			reply.MapTask = task
+			isAssign = true
+		}
+	}
+	if !isAssign {
+		// 3. if not, find any reduce tasks
+		for _, task := range m.ReduceTasks {
+			// 4. if so
+			if task.Task.State == "idle" {
+				task.Task.State = "in-progress"
+				task.Task.Identity = "reduce"
+				reply.ReduceTask = task
+			}
+		}
+	}
 	return nil
 }
 
@@ -89,9 +121,11 @@ func MakeMaster(files []string, nReduce int) *Master {
 
 	// initialize
 	for _, file := range files {
-		m.MapTasks = append(m.MapTasks, file)
-		m.State = append(m.State, "idle")
-		m.Identity = append(m.Identity, "idle")
+		mapTask := MapTask{Task: Task{
+			State:    "idle",
+			Identity: "map",
+		}, Filename: file}
+		m.MapTasks = append(m.MapTasks, mapTask)
 	}
 
 	m.server()

@@ -34,7 +34,8 @@ func Worker(mapf func(string, string) []KeyValue,
 	//- Then modify the coordinator to respond with the file name of an as-yet-unstarted map task.
 
 	// uncomment to send the Example RPC to the master.
-	CallExample()
+	//CallExample()
+	reply := CallForTask()
 }
 
 //
@@ -57,7 +58,25 @@ func CallExample() ExampleReply {
 	call("Master.Example", &args, &reply)
 
 	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Index)
+	fmt.Printf("reply.Y %v\n", reply.Y)
+	return reply
+}
+func CallForTask() Reply {
+
+	// declare an argument structure.
+	args := Args{}
+
+	// fill in the argument(s).
+	args.X = 99
+
+	// declare a reply structure.
+	reply := Reply{}
+
+	// send the RPC request, wait for the reply.
+	call("Master.TaskFinder", &args, &reply)
+
+	// reply.Y should be 100.
+	fmt.Printf("reply.mapTask %v, reply.reduceTask %v \n", reply.MapTask, reply.ReduceTask)
 	return reply
 }
 

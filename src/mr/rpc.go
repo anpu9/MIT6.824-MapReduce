@@ -19,8 +19,14 @@ type ExampleArgs struct {
 }
 
 type ExampleReply struct {
-	Index    int
-	Filename string
+	Y int
+}
+type Args struct {
+	X int
+}
+type Reply struct {
+	MapTask    MapTask
+	ReduceTask ReduceTask
 }
 
 // Add your RPC definitions here.
