@@ -5,7 +5,6 @@ import "log"
 import "net/rpc"
 import "hash/fnv"
 
-
 //
 // Map functions return a slice of KeyValue.
 //
@@ -24,7 +23,6 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-
 //
 // main/mrworker.go calls this function.
 //
@@ -32,10 +30,11 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+	// - One way to get started is to modify mr/worker.go's Worker() to send an RPC to the coordinator asking for a task.
+	//- Then modify the coordinator to respond with the file name of an as-yet-unstarted map task.
 
 	// uncomment to send the Example RPC to the master.
-	// CallExample()
-
+	CallExample()
 }
 
 //
@@ -43,7 +42,7 @@ func Worker(mapf func(string, string) []KeyValue,
 //
 // the RPC argument and reply types are defined in rpc.go.
 //
-func CallExample() {
+func CallExample() ExampleReply {
 
 	// declare an argument structure.
 	args := ExampleArgs{}
@@ -58,7 +57,8 @@ func CallExample() {
 	call("Master.Example", &args, &reply)
 
 	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
+	fmt.Printf("reply.Y %v\n", reply.Index)
+	return reply
 }
 
 //

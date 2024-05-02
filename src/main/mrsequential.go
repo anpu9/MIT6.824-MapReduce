@@ -27,16 +27,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage: mrsequential xxx.so inputfiles...\n")
 		os.Exit(1)
 	}
-
+	// go run -race mrsequential.go wc.so pg*.txt
 	mapf, reducef := loadPlugin(os.Args[1])
 
-	//
+	// map(k1, v1) -> list(k2, v2)
 	// read each input file,
 	// pass it to Map,
 	// accumulate the intermediate Map output.
 	//
 	intermediate := []mr.KeyValue{}
-	for _, filename := range os.Args[2:] {
+	for _, filename := range os.Args[2:] { // map the content of each file to
 		file, err := os.Open(filename)
 		if err != nil {
 			log.Fatalf("cannot open %v", filename)
@@ -46,6 +46,7 @@ func main() {
 			log.Fatalf("cannot read %v", filename)
 		}
 		file.Close()
+		//
 		kva := mapf(filename, string(content))
 		intermediate = append(intermediate, kva...)
 	}
@@ -61,8 +62,8 @@ func main() {
 	oname := "mr-out-0"
 	ofile, _ := os.Create(oname)
 
-	//
 	// call Reduce on each distinct key in intermediate[],
+	// reduce list(k2, v2) -> a small list(v2) for Immediate key I
 	// and print the result to mr-out-0.
 	//
 	i := 0
@@ -89,7 +90,9 @@ func main() {
 //
 // load the application Map and Reduce functions
 // from a plugin file, e.g. ../mrapps/wc.so
-//
+// // go run -race mrsequential.go wc.so pg*.txt
+// map (k1,v1) → list(k2,v2) //imediate key value pairs
+// reduce (k2,list(v2)) → list(v2)
 func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(string, []string) string) {
 	p, err := plugin.Open(filename)
 	if err != nil {

@@ -14,6 +14,8 @@ import "time"
 import "os"
 import "fmt"
 
+// the cli is `../mrmaster ../pg*txt`
+// so Master holds the input file names
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: mrmaster inputfiles...\n")
