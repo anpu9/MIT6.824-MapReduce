@@ -94,3 +94,6 @@ func CallExample() {
   fmt.Printf("reply.Y %v\n", reply.Y)
   }
 ```
+
+7. How can master get the location of the disk's location when all reduce 
+8. How can master detect crashed worker?

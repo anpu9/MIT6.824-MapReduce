@@ -24,9 +24,19 @@ type ExampleReply struct {
 type Args struct {
 	X int
 }
+type BufferArgs struct {
+	TaskId   int
+	Location string
+}
 type Reply struct {
+	Identity   string
 	MapTask    MapTask
 	ReduceTask ReduceTask
+	NReduce    int
+}
+
+type IsOKReply struct {
+	IsOK bool
 }
 
 // Add your RPC definitions here.

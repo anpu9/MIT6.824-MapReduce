@@ -5,6 +5,7 @@ import "net"
 import "os"
 import "net/rpc"
 import "net/http"
+import "time"
 
 type Master struct {
 	// Your definitions here.
@@ -20,17 +21,16 @@ type Master struct {
 	nMap        int
 	nReduce     int
 }
-type Task struct {
-	State    string
-	Identity string
-}
+
 type MapTask struct {
-	Task     Task
+	TaskId   int
 	Filename string
+	State    string
 }
 type ReduceTask struct {
-	Task      Task
+	TaskId    int
 	Partition Partition
+	State     string
 }
 type Partition struct {
 	Location string
@@ -54,10 +54,10 @@ func (m *Master) TaskFinder(args *Args, reply *Reply) error {
 
 	for _, task := range m.MapTasks {
 		// 2. if so, return the filename and index
-		if task.Task.State == "idle" {
-			task.Task.State = "in-progress"
-			task.Task.Identity = "map"
+		if task.State == "idle" {
+			task.State = "in-progress"
 			reply.MapTask = task
+			reply.NReduce = m.nReduce
 			isAssign = true
 		}
 	}
@@ -65,14 +65,16 @@ func (m *Master) TaskFinder(args *Args, reply *Reply) error {
 		// 3. if not, find any reduce tasks
 		for _, task := range m.ReduceTasks {
 			// 4. if so
-			if task.Task.State == "idle" {
-				task.Task.State = "in-progress"
-				task.Task.Identity = "reduce"
+			if task.State == "idle" {
+				task.State = "in-progress"
 				reply.ReduceTask = task
 			}
 		}
 	}
 	return nil
+}
+func (m *Master) UpdateDiskLocation(args *BufferArgs, reply *ExampleReply) error {
+
 }
 
 //
@@ -102,6 +104,14 @@ func (m *Master) Done() bool {
 
 	return ret
 }
+func (m *Master) MapDone() bool {
+	for _, task := range m.MapTasks {
+		for task.State != "completed" {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	return true
+}
 
 //
 // create a Master.
@@ -119,15 +129,22 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m.nMap = len(files)
 	m.nReduce = nReduce
 
-	// initialize
-	for _, file := range files {
-		mapTask := MapTask{Task: Task{
+	// initialize map task
+	for i, file := range files {
+		mapTask := MapTask{
+			TaskId:   i,
 			State:    "idle",
-			Identity: "map",
-		}, Filename: file}
+			Filename: file}
 		m.MapTasks = append(m.MapTasks, mapTask)
 	}
-
+	// initialize reduce task
+	for i := 0; i < m.nReduce; i++ {
+		reduceTask := ReduceTask{
+			TaskId: i,
+			State:  "idle",
+		}
+		m.ReduceTasks = append(m.ReduceTasks, reduceTask)
+	}
 	m.server()
 	return &m
 }
