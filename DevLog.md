@@ -96,4 +96,13 @@ func CallExample() {
 ```
 
 7. How can master get the location of the disk's location when all reduce 
+- mapworker to make a RPC call
 8. How can master detect crashed worker?
+
+# Log
+- add wait loop to make sure reduce start after all map tasks finished
+- master initialize reduce task
+- map worker write intermediate file to disk
+  TODO:
+1. modify MapWorker to make RPC in worker.go to update immediate file disk location to master.go
+2. modify ReduceWorker in worker.go to pull location from master(RPC) and write output file
