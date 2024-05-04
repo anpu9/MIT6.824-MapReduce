@@ -28,7 +28,7 @@ type BufferArgs struct {
 	TaskId   int
 	Location string
 }
-type Reply struct {
+type TaskReply struct {
 	Identity   string
 	MapTask    MapTask
 	ReduceTask ReduceTask

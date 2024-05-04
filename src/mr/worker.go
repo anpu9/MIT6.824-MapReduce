@@ -50,9 +50,11 @@ func Worker(mapf func(string, string) []KeyValue,
 	reply := CallForTask()
 	if reply.Identity == "map" {
 		MapWorker(reply.MapTask, reply.NReduce, mapf)
-
-	} else {
+	} else if reply.Identity == "reduce" {
 		ReduceWorker(reply.ReduceTask, reducef)
+	} else {
+		// Exit the process with a status code
+		os.Exit(0)
 	}
 }
 
@@ -61,6 +63,8 @@ func MapWorker(task MapTask, nReduce int, mapf func(string, string) []KeyValue) 
 		A reasonable naming convention for intermediate files is mr-X-Y,
 		where X is the Map task number, and Y is the reduce task number.
 	*/
+	fmt.Printf("This is %d th Map task started! ", task.TaskId)
+	task.State = "on-progress"
 	filename := task.Filename
 
 	// open file
@@ -88,39 +92,39 @@ func MapWorker(task MapTask, nReduce int, mapf func(string, string) []KeyValue) 
 
 	i := 0
 	X := task.TaskId
-	for i < len(intermediate) {
-		j := i + 1
-		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-			j++
-		}
-		values := []string{}
-		for k := i; k < j; k++ {
-			values = append(values, intermediate[k].Value)
-		}
 
-		// this is the correct format for each line of Reduce output.
-		fmt.Printf("%v %v\n", intermediate[i].Key, values)
+	// assign reduce task for intermediate file produced by map worker
+	for i < len(intermediate) {
 		// The map part of your worker can use the ihash(key) function (in worker.go)
 		// to pick the reduce task for a given key.
 		Y := ihash(intermediate[i].Key) % nReduce
 		//  reasonable naming convention for intermediate files is mr-X-Y,
 		// where X is the Map task number, and Y is the reduce task number.
-		outFilename := fmt.Sprint("mr-%d-%d", X, Y)
+		outFilename := fmt.Sprintf("mr-%d-%d", X, Y)
 
-		file, err := os.Create(outFilename)
+		file, err := os.OpenFile(outFilename, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 		if err != nil {
 			panic(err)
 		}
 		defer file.Close()
 		// Create a JSON encoder
 		encoder := json.NewEncoder(file)
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
 		// write json file
-		err = encoder.Encode(&values)
-		// TODO: update immediate location
-		CallNotifyReduceLoc(Y, filename)
+		for k := i; k < j; k++ {
+			err = encoder.Encode(&intermediate[k])
+		}
+		// update location
+		fmt.Printf("The intermediate file location for reduce task %d( %v )has been update to master\n", Y, outFilename)
+		CallNotifyReduceLoc(Y, outFilename)
 		i = j
 	}
+
 	task.State = "completed"
+	fmt.Printf("This is %d th Map task completed! ", task.TaskId)
 }
 
 func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
@@ -135,13 +139,70 @@ func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
 		Another possibility is for the relevant RPC handler in the coordinator to have a loop that waits, either with time.Sleep() or sync.Cond.
 		Go runs the handler for each RPC in its own thread, so the fact that one handler is waiting won't prevent the coordinator from processing other RPCs.
 	*/
+	fmt.Printf("This is %d th Reduce task started! ", task.TaskId)
+	task.State = "on-progress"
 	// wait for other
 	CallIfReduceOk()
-	taskId := task.TaskId
+	if task.State == "idle" {
+		task.State = "in-progress"
+	}
 	// TODO: read all intermediate file for partition `taskId` mr-*-taskId
-	// get location from master
-	// read json file
+	var kva []KeyValue
+
+	// read all intermediate file for this reduce task in task.Partition
+	for _, filename := range task.Partition {
+		// Open the file
+		fmt.Printf("Reduce number %d is opening the intermediate file % v \n", task.TaskId, filename)
+		file, err := os.Open(filename)
+		if err != nil {
+			// Handle error if file cannot be opened
+			panic(err)
+		}
+		defer file.Close()
+
+		// Create a JSON decoder for the file
+		dec := json.NewDecoder(file)
+
+		// Decode each key-value pair from the file
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				// Break out of loop when there are no more key-value pairs
+				break
+			}
+			// Append the key-value pair to kva slice
+			kva = append(kva, kv)
+		}
+	}
+	// sort by intermediate key
+	sort.Sort(ByKey(kva))
 	// write formatted data to outfile `mr-out-X`, one for each reduce task
+	outFilename := fmt.Sprint("mr-out-%d", task.TaskId)
+	fmt.Printf("Reduce number %d is creating the  outputfile % v \n", task.TaskId, outFilename)
+	ofile, err := os.Create(outFilename)
+	if err != nil {
+		panic(err)
+	}
+	i := 0
+	// function reduce func
+	for i < len(kva) {
+		j := i + 1
+		for j < len(kva) && kva[j].Key == kva[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, kva[k].Value)
+		}
+		output := reducef(kva[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
+		i = j
+	}
+	ofile.Close()
+	task.State = "completed"
+	fmt.Printf("This is %d th Reduce task completed! ", task.TaskId)
 }
 
 //
@@ -167,7 +228,7 @@ func CallExample() ExampleReply {
 	fmt.Printf("reply.Y %v\n", reply.Y)
 	return reply
 }
-func CallForTask() Reply {
+func CallForTask() TaskReply {
 
 	// declare an argument structure.
 	args := Args{}
@@ -176,11 +237,11 @@ func CallForTask() Reply {
 	args.X = 99
 
 	// declare a reply structure.
-	reply := Reply{}
+	reply := TaskReply{}
 
 	// send the RPC request, wait for the reply.
 	call("Master.TaskFinder", &args, &reply)
-
+	fmt.Printf("The task type is  %v\n", reply.Identity)
 	fmt.Printf("reply.mapTask %v, reply.reduceTask %v \n", reply.MapTask, reply.ReduceTask)
 	return reply
 }
@@ -192,22 +253,20 @@ func CallIfReduceOk() bool {
 
 	// send the RPC request, wait for the reply.
 	call("Master.MapDone", &args, &reply)
-
 	// reply.IsOk should be true.
 	return reply.IsOK
 }
-func CallNotifyReduceLoc(taskId int, filename string) {
+func CallNotifyReduceLoc(taskId int, filename string) IsOKReply {
 	// declare an argument structure.
-	args := Partition{}
+	args := BufferArgs{}
 	// fill in the argument(s).
 	args.Location = filename
+	args.TaskId = taskId
 	// declare a reply structure.
-	reply := Reply{}
+	reply := IsOKReply{}
 
 	// send the RPC request, wait for the reply.
 	call("Master.UpdateDiskLocation", &args, &reply)
-
-	fmt.Printf("reply.mapTask %v, reply.reduceTask %v \n", reply.MapTask, reply.ReduceTask)
 	return reply
 }
 
