@@ -68,6 +68,8 @@ func MapWorker(task MapTask, nReduce int, mapf func(string, string) []KeyValue) 
 		A reasonable naming convention for intermediate files is mr-X-Y,
 		where X is the Map task number, and Y is the reduce task number.
 	*/
+	CallNotifyTaskProgress("map", "in-progress", task.TaskId)
+
 	fmt.Printf("This is %d th Map task started! ", task.TaskId)
 	filename := task.Filename
 
@@ -126,7 +128,7 @@ func MapWorker(task MapTask, nReduce int, mapf func(string, string) []KeyValue) 
 		CallNotifyReduceLoc(Y, outFilename)
 		i = j
 	}
-
+	CallNotifyTaskProgress("map", "completed", task.TaskId)
 	fmt.Printf("This is %d th Map task completed! ", task.TaskId)
 }
 
@@ -145,9 +147,9 @@ func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
 	fmt.Printf("This is %d th Reduce task started! ", task.TaskId)
 	// wait for other
 	CallIfReduceOk()
-	if task.State == "idle" {
-		task.State = "in-progress"
-	}
+	// update
+	CallNotifyTaskProgress("reduce", "in-progress", task.TaskId)
+
 	var kva []KeyValue
 
 	// read all intermediate file for this reduce task in task.Partition
@@ -177,8 +179,9 @@ func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
 	}
 	// sort by intermediate key
 	sort.Sort(ByKey(kva))
+	fmt.Printf("This is %d th Reduce task's immediate key-pair length %d! ", task.TaskId, len(kva))
 	// write formatted data to outfile `mr-out-X`, one for each reduce task
-	outFilename := fmt.Sprint("mr-out-%d", task.TaskId)
+	outFilename := fmt.Sprintf("mr-out-%d", task.TaskId)
 	fmt.Printf("Reduce number %d is creating the  outputfile % v \n", task.TaskId, outFilename)
 	ofile, err := os.Create(outFilename)
 	if err != nil {
@@ -196,12 +199,15 @@ func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
 			values = append(values, kva[k].Value)
 		}
 		output := reducef(kva[i].Key, values)
+		fmt.Printf("Reduce output: This is the key: %v , Output value: %v\n", kva[i].Key, output)
 
 		// this is the correct format for each line of Reduce output.
 		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
 		i = j
 	}
 	ofile.Close()
+
+	CallNotifyTaskProgress("reduce", "completed", task.TaskId)
 	fmt.Printf("This is %d th Reduce task completed! ", task.TaskId)
 }
 
@@ -247,7 +253,7 @@ func CallForTask() TaskReply {
 }
 func CallIfReduceOk() bool {
 	// declare an argument structure.
-	args := ExampleArgs{}
+	args := Args{}
 	// declare a reply structure.
 	reply := IsOKReply{}
 
@@ -268,6 +274,14 @@ func CallNotifyReduceLoc(taskId int, filename string) IsOKReply {
 	// send the RPC request, wait for the reply.
 	call("Master.UpdateDiskLocation", &args, &reply)
 	return reply
+}
+func CallNotifyTaskProgress(identity string, state string, taskId int) {
+	args := NotificationArg{}
+	args.Identity = identity
+	args.TaskId = taskId
+	args.State = state
+	reply := IsOKReply{}
+	call("Master.NotifyTaskProgress", &args, &reply)
 }
 
 //

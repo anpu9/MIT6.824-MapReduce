@@ -24,6 +24,11 @@ type ExampleReply struct {
 type Args struct {
 	X int
 }
+type NotificationArg struct {
+	TaskId   int
+	State    string
+	Identity string
+}
 type BufferArgs struct {
 	TaskId   int
 	Location string

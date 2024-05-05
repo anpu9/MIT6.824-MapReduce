@@ -45,15 +45,10 @@ type ReduceTask struct {
 //
 // the RPC argument and reply types are defined in rpc.go.
 //
-func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
-}
+
 func (m *Master) TaskFinder(args *Args, reply *TaskReply) error {
 	// 1. check if there is any map task
 	fmt.Println("Finding a Map Task.... \n")
-	fmt.Printf("Length of MapTasks: %d\n", len(m.MapTasks))
-
 	var isAssign = false
 	m.mu.Lock()
 	fmt.Println("Get the Lock for task finding.... \n")
@@ -76,7 +71,7 @@ func (m *Master) TaskFinder(args *Args, reply *TaskReply) error {
 		for _, task := range m.ReduceTasks {
 			// 4. if so
 			if task.State == "idle" {
-				fmt.Printf("Reduce Task Find! The number of Map task: %d \n", task.TaskId)
+				fmt.Printf("Reduce Task Find! The number of Reduce task: %d \n", task.TaskId)
 				reply.ReduceTask = task
 				task.State = "assigned"
 				reply.Identity = "reduce"
@@ -100,6 +95,27 @@ func (m *Master) UpdateDiskLocation(args *BufferArgs, reply *IsOKReply) error {
 	task := m.ReduceTasks[reduceTaskId]
 	task.Partition = append(task.Partition, args.Location)
 	m.mu.Unlock()
+	reply.IsOK = true
+	return nil
+}
+func (m *Master) NotifyTaskProgress(args *NotificationArg, reply *IsOKReply) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	taskId := args.TaskId
+	taskType := args.Identity
+	taskState := args.State
+
+	switch taskType {
+	case "map":
+		m.MapTasks[taskId].State = taskState
+	case "reduce":
+		m.ReduceTasks[taskId].State = taskState
+	default:
+		// Handle unknown task type
+		return fmt.Errorf("unknown task type: %s", taskType)
+	}
+
 	reply.IsOK = true
 	return nil
 }
@@ -141,7 +157,7 @@ func (m *Master) Done() bool {
 }
 
 // check if every task has been assigned by RPC
-func (m *Master) Assigned(args *ExampleArgs, reply *IsOKReply) error {
+func (m *Master) Assigned(args *Args, reply *IsOKReply) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -158,7 +174,7 @@ func (m *Master) Assigned(args *ExampleArgs, reply *IsOKReply) error {
 	//ret = true
 	return nil
 }
-func (m *Master) MapDone(args *ExampleArgs, reply *IsOKReply) error {
+func (m *Master) MapDone(args *Args, reply *IsOKReply) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Use a condition variable to wait for map tasks to be completed
