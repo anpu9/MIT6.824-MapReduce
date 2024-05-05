@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"sort"
+	"time"
 )
 import "log"
 import "net/rpc"
@@ -47,7 +48,6 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// uncomment to send the Example RPC to the master.
 	//CallExample()
-	// TODO: check if every task has been assigned by RPC
 
 	reply := CallForTask()
 	for reply.Identity != "exit" {
@@ -56,6 +56,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		} else if reply.Identity == "reduce" {
 			ReduceWorker(reply.ReduceTask, reducef)
 		}
+		time.Sleep(time.Millisecond) // let other process come in
 		reply = CallForTask()
 	}
 
@@ -124,8 +125,7 @@ func MapWorker(task MapTask, nReduce int, mapf func(string, string) []KeyValue) 
 			err = encoder.Encode(&intermediate[k])
 		}
 		// update location
-		//fmt.Printf("The intermediate file location for reduce task %d( %v )has been update to master\n", Y, outFilename)
-		CallNotifyReduceLoc(Y, outFilename)
+		CallNotifyUpdateDiskLocation(Y, outFilename)
 		i = j
 	}
 	CallNotifyTaskProgress("map", "completed", task.TaskId)
@@ -144,18 +144,19 @@ func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
 		Another possibility is for the relevant RPC handler in the coordinator to have a loop that waits, either with time.Sleep() or sync.Cond.
 		Go runs the handler for each RPC in its own thread, so the fact that one handler is waiting won't prevent the coordinator from processing other RPCs.
 	*/
-	fmt.Printf("This is %d th Reduce task started! ", task.TaskId)
+	fmt.Printf("This is %d th Reduce task started! \n", task.TaskId)
 	// wait for other
 	CallIfReduceOk()
 	// update
 	CallNotifyTaskProgress("reduce", "in-progress", task.TaskId)
+
+	fmt.Printf("This is %d th Reduce task's partiton! %v \n", task.TaskId, task.Partition)
 
 	var kva []KeyValue
 
 	// read all intermediate file for this reduce task in task.Partition
 	for _, filename := range task.Partition {
 		// Open the file
-		fmt.Printf("Reduce number %d is opening the intermediate file % v \n", task.TaskId, filename)
 		file, err := os.Open(filename)
 		if err != nil {
 			// Handle error if file cannot be opened
@@ -179,7 +180,7 @@ func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
 	}
 	// sort by intermediate key
 	sort.Sort(ByKey(kva))
-	fmt.Printf("This is %d th Reduce task's immediate key-pair length %d! ", task.TaskId, len(kva))
+	fmt.Printf("This is %d th Reduce task's immediate key-pair length %d! \n", task.TaskId, len(kva))
 	// write formatted data to outfile `mr-out-X`, one for each reduce task
 	outFilename := fmt.Sprintf("mr-out-%d", task.TaskId)
 	fmt.Printf("Reduce number %d is creating the  outputfile % v \n", task.TaskId, outFilename)
@@ -199,7 +200,6 @@ func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
 			values = append(values, kva[k].Value)
 		}
 		output := reducef(kva[i].Key, values)
-		fmt.Printf("Reduce output: This is the key: %v , Output value: %v\n", kva[i].Key, output)
 
 		// this is the correct format for each line of Reduce output.
 		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
@@ -262,12 +262,12 @@ func CallIfReduceOk() bool {
 	// reply.IsOk should be true.
 	return reply.IsOK
 }
-func CallNotifyReduceLoc(taskId int, filename string) IsOKReply {
+func CallNotifyUpdateDiskLocation(taskId int, filename string) IsOKReply {
 	// declare an argument structure.
 	args := BufferArgs{}
 	// fill in the argument(s).
-	args.Location = filename
 	args.TaskId = taskId
+	args.Location = filename
 	// declare a reply structure.
 	reply := IsOKReply{}
 

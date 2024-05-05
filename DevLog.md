@@ -108,3 +108,11 @@ func CallExample() {
 - master initialize reduce task
 - map worker write intermediate file to disk
   TODO:
+1. clean the disk space
+2. find the reason why the same reduce task could be assigned to different hosts
+3. make sure the reduce output format correctly
+- initialize an array with make([]string, 0)
+- One possibility is that the ReduceTask object is being copied instead of being referenced directly. 
+- To ensure that you're updating the original ReduceTask object in the m.ReduceTasks slice, you should directly reference it using its index:
+Key points:
+1. the mutex is only used to protect access to the MapTasks and ReduceTasks slices within the TaskFinder function. Once a task is marked as "assigned", it is still possible for multiple workers to obtain the same task if they make concurrent RPC calls to the TaskFinder function before the first worker finishes processing the task.

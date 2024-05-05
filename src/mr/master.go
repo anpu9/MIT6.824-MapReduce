@@ -38,30 +38,20 @@ type ReduceTask struct {
 	State     string
 }
 
-// Your code here -- RPC handlers for the worker to call.
-
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-
 func (m *Master) TaskFinder(args *Args, reply *TaskReply) error {
-	// 1. check if there is any map task
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	fmt.Println("Finding a Map Task.... \n")
 	var isAssign = false
-	m.mu.Lock()
-	fmt.Println("Get the Lock for task finding.... \n")
-	defer m.mu.Unlock()
 	for _, task := range m.MapTasks {
 		// 2. if so, return the filename and index
 		if task.State == "idle" {
-			fmt.Printf("Map Task Find! The number of Map task: %d \n", task.TaskId)
 			task.State = "assigned"
 			reply.MapTask = task
 			reply.NReduce = m.nReduce
 			reply.Identity = "map"
 			isAssign = true
+			fmt.Printf("Map Task Find! The number of Map task: %d \n", task.TaskId)
 			break
 		}
 	}
@@ -71,17 +61,16 @@ func (m *Master) TaskFinder(args *Args, reply *TaskReply) error {
 		for _, task := range m.ReduceTasks {
 			// 4. if so
 			if task.State == "idle" {
-				fmt.Printf("Reduce Task Find! The number of Reduce task: %d \n", task.TaskId)
-				reply.ReduceTask = task
 				task.State = "assigned"
+				reply.ReduceTask = task
 				reply.Identity = "reduce"
 				isAssign = true
+				fmt.Printf("Reduce Task Find! The number of Reduce task: %d \n", task.TaskId)
 				break
 			}
 		}
 	}
 
-	// TODO: if all tasks have been assignment, wait for Done()
 	if !isAssign {
 		fmt.Println("All Tasks have been assignment, wait for Done() \n")
 		reply.Identity = "exit"
@@ -91,10 +80,25 @@ func (m *Master) TaskFinder(args *Args, reply *TaskReply) error {
 }
 func (m *Master) UpdateDiskLocation(args *BufferArgs, reply *IsOKReply) error {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	reduceTaskId := args.TaskId
-	task := m.ReduceTasks[reduceTaskId]
-	task.Partition = append(task.Partition, args.Location)
-	m.mu.Unlock()
+	location := args.Location
+
+	// Check if the location already exists in the partition
+	exists := false
+	for _, loc := range m.ReduceTasks[reduceTaskId].Partition {
+		if loc == location {
+			exists = true
+			break
+		}
+	}
+
+	// If the location doesn't exist, append it
+	if !exists {
+		m.ReduceTasks[reduceTaskId].Partition = append(m.ReduceTasks[reduceTaskId].Partition, location)
+		fmt.Printf("Now this partition is %v\n", m.ReduceTasks[reduceTaskId].Partition)
+	}
+
 	reply.IsOK = true
 	return nil
 }
@@ -141,38 +145,27 @@ func (m *Master) server() {
 // if the entire job has finished.
 //
 func (m *Master) Done() bool {
-	ret := false
-	for _, task := range m.MapTasks {
-		if task.State != "completed" {
-			return ret
-		}
-	}
-	for _, task := range m.ReduceTasks {
-		if task.State != "completed" {
-			return ret
-		}
-	}
-	ret = true
-	return ret
-}
-
-// check if every task has been assigned by RPC
-func (m *Master) Assigned(args *Args, reply *IsOKReply) error {
+	ret := true // Assume everything is completed by default
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	for _, task := range m.MapTasks {
 		if task.State != "completed" {
-			reply.IsOK = false
+			ret = false // If any map task is not completed, set ret to false
+			break
 		}
 	}
-	for _, task := range m.ReduceTasks {
-		if task.State != "completed" {
-			reply.IsOK = false
+
+	if ret { // Only check reduce tasks if all map tasks are completed
+		for _, task := range m.ReduceTasks {
+			if task.State != "completed" {
+				ret = false // If any reduce task is not completed, set ret to false
+				break
+			}
 		}
 	}
-	//ret = true
-	return nil
+
+	return ret // Return the final result
 }
 func (m *Master) MapDone(args *Args, reply *IsOKReply) error {
 	m.mu.Lock()
@@ -223,8 +216,9 @@ func MakeMaster(files []string, nReduce int) *Master {
 	// initialize reduce task
 	for i := 0; i < m.nReduce; i++ {
 		reduceTask := ReduceTask{
-			TaskId: i,
-			State:  "idle",
+			TaskId:    i,
+			State:     "idle",
+			Partition: make([]string, 0),
 		}
 		m.ReduceTasks = append(m.ReduceTasks, reduceTask)
 	}
