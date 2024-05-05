@@ -47,15 +47,20 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// uncomment to send the Example RPC to the master.
 	//CallExample()
+	// TODO: check if every task has been assigned by RPC
+
 	reply := CallForTask()
-	if reply.Identity == "map" {
-		MapWorker(reply.MapTask, reply.NReduce, mapf)
-	} else if reply.Identity == "reduce" {
-		ReduceWorker(reply.ReduceTask, reducef)
-	} else {
-		// Exit the process with a status code
-		os.Exit(0)
+	for reply.Identity != "exit" {
+		if reply.Identity == "map" {
+			MapWorker(reply.MapTask, reply.NReduce, mapf)
+		} else if reply.Identity == "reduce" {
+			ReduceWorker(reply.ReduceTask, reducef)
+		}
+		reply = CallForTask()
 	}
+
+	// there is no other idle tasks
+	os.Exit(0)
 }
 
 func MapWorker(task MapTask, nReduce int, mapf func(string, string) []KeyValue) {
@@ -64,7 +69,6 @@ func MapWorker(task MapTask, nReduce int, mapf func(string, string) []KeyValue) 
 		where X is the Map task number, and Y is the reduce task number.
 	*/
 	fmt.Printf("This is %d th Map task started! ", task.TaskId)
-	task.State = "on-progress"
 	filename := task.Filename
 
 	// open file
@@ -118,12 +122,11 @@ func MapWorker(task MapTask, nReduce int, mapf func(string, string) []KeyValue) 
 			err = encoder.Encode(&intermediate[k])
 		}
 		// update location
-		fmt.Printf("The intermediate file location for reduce task %d( %v )has been update to master\n", Y, outFilename)
+		//fmt.Printf("The intermediate file location for reduce task %d( %v )has been update to master\n", Y, outFilename)
 		CallNotifyReduceLoc(Y, outFilename)
 		i = j
 	}
 
-	task.State = "completed"
 	fmt.Printf("This is %d th Map task completed! ", task.TaskId)
 }
 
@@ -140,13 +143,11 @@ func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
 		Go runs the handler for each RPC in its own thread, so the fact that one handler is waiting won't prevent the coordinator from processing other RPCs.
 	*/
 	fmt.Printf("This is %d th Reduce task started! ", task.TaskId)
-	task.State = "on-progress"
 	// wait for other
 	CallIfReduceOk()
 	if task.State == "idle" {
 		task.State = "in-progress"
 	}
-	// TODO: read all intermediate file for partition `taskId` mr-*-taskId
 	var kva []KeyValue
 
 	// read all intermediate file for this reduce task in task.Partition
@@ -201,7 +202,6 @@ func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
 		i = j
 	}
 	ofile.Close()
-	task.State = "completed"
 	fmt.Printf("This is %d th Reduce task completed! ", task.TaskId)
 }
 

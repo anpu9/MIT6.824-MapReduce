@@ -62,6 +62,7 @@ func (m *Master) TaskFinder(args *Args, reply *TaskReply) error {
 		// 2. if so, return the filename and index
 		if task.State == "idle" {
 			fmt.Printf("Map Task Find! The number of Map task: %d \n", task.TaskId)
+			task.State = "assigned"
 			reply.MapTask = task
 			reply.NReduce = m.nReduce
 			reply.Identity = "map"
@@ -77,6 +78,7 @@ func (m *Master) TaskFinder(args *Args, reply *TaskReply) error {
 			if task.State == "idle" {
 				fmt.Printf("Reduce Task Find! The number of Map task: %d \n", task.TaskId)
 				reply.ReduceTask = task
+				task.State = "assigned"
 				reply.Identity = "reduce"
 				isAssign = true
 				break
@@ -124,8 +126,6 @@ func (m *Master) server() {
 //
 func (m *Master) Done() bool {
 	ret := false
-
-	// Your code here.
 	for _, task := range m.MapTasks {
 		if task.State != "completed" {
 			return ret
@@ -138,6 +138,25 @@ func (m *Master) Done() bool {
 	}
 	ret = true
 	return ret
+}
+
+// check if every task has been assigned by RPC
+func (m *Master) Assigned(args *ExampleArgs, reply *IsOKReply) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, task := range m.MapTasks {
+		if task.State != "completed" {
+			reply.IsOK = false
+		}
+	}
+	for _, task := range m.ReduceTasks {
+		if task.State != "completed" {
+			reply.IsOK = false
+		}
+	}
+	//ret = true
+	return nil
 }
 func (m *Master) MapDone(args *ExampleArgs, reply *IsOKReply) error {
 	m.mu.Lock()
