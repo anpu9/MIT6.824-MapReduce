@@ -116,3 +116,8 @@ func CallExample() {
 - To ensure that you're updating the original ReduceTask object in the m.ReduceTasks slice, you should directly reference it using its index:
 Key points:
 1. the mutex is only used to protect access to the MapTasks and ReduceTasks slices within the TaskFinder function. Once a task is marked as "assigned", it is still possible for multiple workers to obtain the same task if they make concurrent RPC calls to the TaskFinder function before the first worker finishes processing the task.
+2. It seems like you are encountering a race condition where multiple processes are attempting to acquire the mutex lock simultaneously. This can happen if the mutex is not properly synchronized across multiple processes.
+
+In your scenario, each process appears to be running independently, and they are all trying to acquire the same mutex lock from the Master struct. However, since each process runs in its own memory space and has its own copy of the Master struct, they are not actually sharing the mutex lock.
+
+To ensure that only one process has access to the shared data protected by the mutex, you need to use a synchronization mechanism that works across multiple processes. In Go, one common approach is to use a named mutex, which can be shared across processes.

@@ -12,9 +12,7 @@ import "log"
 import "net/rpc"
 import "hash/fnv"
 
-//
 // Map functions return a slice of KeyValue.
-//
 type KeyValue struct {
 	Key   string
 	Value string
@@ -26,37 +24,30 @@ func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
-//
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
-//
 func ihash(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-//
 // main/mrworker.go calls this function.
-//
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
 	// - One way to get started is to modify mr/worker.go's Worker() to send an RPC to the coordinator asking for a task.
 	//- Then modify the coordinator to respond with the file name of an as-yet-unstarted map task.
-
-	// uncomment to send the Example RPC to the master.
-	//CallExample()
-
+	time.Sleep(time.Second)
 	reply := CallForTask()
-	for reply.Identity != "exit" {
-		if reply.Identity == "map" {
-			MapWorker(reply.MapTask, reply.NReduce, mapf)
-		} else if reply.Identity == "reduce" {
-			ReduceWorker(reply.ReduceTask, reducef)
+	for reply.Identity != Exit {
+		if reply.Identity == Map {
+			MapWorker(*reply.MapTask, reply.NReduce, mapf)
+		} else if reply.Identity == Reduce {
+			ReduceWorker(*reply.ReduceTask, reducef)
 		}
-		time.Sleep(time.Millisecond) // let other process come in
+		time.Sleep(time.Second)
 		reply = CallForTask()
 	}
 
@@ -69,21 +60,14 @@ func MapWorker(task MapTask, nReduce int, mapf func(string, string) []KeyValue) 
 		A reasonable naming convention for intermediate files is mr-X-Y,
 		where X is the Map task number, and Y is the reduce task number.
 	*/
-	CallNotifyTaskProgress("map", "in-progress", task.TaskId)
 
-	fmt.Printf("This is %d th Map task started! ", task.TaskId)
+	fmt.Printf("This is %d th Map task started! \n", task.TaskId)
 	filename := task.Filename
-
 	// open file
 	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatalf("cannot open %v", filename)
-	}
-	// read file
+	checkError(err, "cannot open %v", filename)
 	content, err := ioutil.ReadAll(file)
-	if err != nil {
-		log.Fatalf("cannot read %v", filename)
-	}
+	checkError(err, "cannot read %v", filename)
 	file.Close()
 
 	// generate intermediate keys
@@ -124,11 +108,12 @@ func MapWorker(task MapTask, nReduce int, mapf func(string, string) []KeyValue) 
 		for k := i; k < j; k++ {
 			err = encoder.Encode(&intermediate[k])
 		}
+		//fmt.Printf("The outfile is %v", outFilename)
 		// update location
 		CallNotifyUpdateDiskLocation(Y, outFilename)
 		i = j
 	}
-	CallNotifyTaskProgress("map", "completed", task.TaskId)
+	CallNotifyTaskProgress(Map, Done, task.TaskId)
 	fmt.Printf("This is %d th Map task completed! ", task.TaskId)
 }
 
@@ -148,18 +133,19 @@ func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
 	// wait for other
 	CallIfReduceOk()
 	// update
-	CallNotifyTaskProgress("reduce", "in-progress", task.TaskId)
+	CallNotifyTaskProgress(Reduce, Assigned, task.TaskId)
 
-	fmt.Printf("This is %d th Reduce task's partiton! %v \n", task.TaskId, task.Partition)
+	//fmt.Printf("This is %d th Reduce task's partiton! %v \n", task.TaskId, task.Partition)
 
 	var kva []KeyValue
-
+	fmt.Printf("The length of partition is %d \n", len(task.Partition))
 	// read all intermediate file for this reduce task in task.Partition
 	for _, filename := range task.Partition {
 		// Open the file
 		file, err := os.Open(filename)
 		if err != nil {
 			// Handle error if file cannot be opened
+			log.Fatalf("cannot open %v", filename)
 			panic(err)
 		}
 		defer file.Close()
@@ -207,40 +193,17 @@ func ReduceWorker(task ReduceTask, reducef func(string, []string) string) {
 	}
 	ofile.Close()
 
-	CallNotifyTaskProgress("reduce", "completed", task.TaskId)
-	fmt.Printf("This is %d th Reduce task completed! ", task.TaskId)
+	CallNotifyTaskProgress(Reduce, Done, task.TaskId)
+	fmt.Printf("This is %d th Reduce task completed! \n", task.TaskId)
 }
 
-//
-// example function to show how to make an RPC call to the master.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() ExampleReply {
-
-	// declare an argument structure.
-	args := ExampleArgs{}
-
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	call("Master.Example", &args, &reply)
-
-	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
-	return reply
-}
 func CallForTask() TaskReply {
 
 	// declare an argument structure.
 	args := Args{}
 
 	// fill in the argument(s).
-	args.X = 99
+	args.X = os.Getpid()
 
 	// declare a reply structure.
 	reply := TaskReply{}
@@ -275,7 +238,7 @@ func CallNotifyUpdateDiskLocation(taskId int, filename string) IsOKReply {
 	call("Master.UpdateDiskLocation", &args, &reply)
 	return reply
 }
-func CallNotifyTaskProgress(identity string, state string, taskId int) {
+func CallNotifyTaskProgress(identity TaskType, state TaskState, taskId int) {
 	args := NotificationArg{}
 	args.Identity = identity
 	args.TaskId = taskId
@@ -284,11 +247,9 @@ func CallNotifyTaskProgress(identity string, state string, taskId int) {
 	call("Master.NotifyTaskProgress", &args, &reply)
 }
 
-//
 // send an RPC request to the master, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
-//
 func call(rpcname string, args interface{}, reply interface{}) bool {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := masterSock()
@@ -305,4 +266,9 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 
 	fmt.Println(err)
 	return false
+}
+func checkError(err error, format string, v ...interface{}) {
+	if err != nil {
+		log.Fatalf(format, v)
+	}
 }

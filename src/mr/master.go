@@ -11,76 +11,94 @@ import (
 	"time"
 )
 
-type Master struct {
-	// Your definitions here.
-	/*
-		For each map task and reduce task, it stores the state (idle, in-progress, or completed),
-		and the identity of the worker machine (for non-idle tasks).
+/*
+For each map task and reduce task, it stores the state (idle, in-progress, or completed),
+and the identity of the worker machine (for non-idle tasks).
 
-		for each completed map task,
-		the master stores the locations and sizes of the R intermediate file regions produced by the map task
-	*/
+for each completed map task,
+the master stores the locations and sizes of the R intermediate file regions produced by the map task
+*/
+type TaskState int
+type TaskType int
+
+const (
+	Idle TaskState = iota
+	Assigned
+	Done
+)
+const (
+	Map TaskType = iota
+	Reduce
+	Exit
+)
+
+type Master struct {
 	MapTasks    []MapTask    // len = nMap
 	ReduceTasks []ReduceTask // len = nReduce
 	nMap        int
 	nReduce     int
-	mu          sync.Mutex
+	Mu          sync.RWMutex
 }
 
 type MapTask struct {
 	TaskId   int
 	Filename string
-	State    string
+	State    TaskState
 }
 type ReduceTask struct {
 	TaskId    int
 	Partition []string
-	State     string
+	State     TaskState
 }
 
 func (m *Master) TaskFinder(args *Args, reply *TaskReply) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	fmt.Printf("The process %d is trying to get Lock \n", args.X)
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+
 	fmt.Println("Finding a Map Task.... \n")
 	var isAssign = false
+	// First, check for any idle map tasks
 	for _, task := range m.MapTasks {
-		// 2. if so, return the filename and index
-		if task.State == "idle" {
-			task.State = "assigned"
-			reply.MapTask = task
+		if task.State == Idle {
+			//fmt.Printf("Task %d' original state is %v \n", task.TaskId, task.State)
+			task.State = Assigned
+			//fmt.Printf("Task %d' assigned state is %v \n", task.TaskId, task.State)
+			reply.MapTask = &task
 			reply.NReduce = m.nReduce
-			reply.Identity = "map"
+			reply.Identity = Map
 			isAssign = true
-			fmt.Printf("Map Task Find! The number of Map task: %d \n", task.TaskId)
-			break
+			fmt.Printf("Map Task Found! The number of Map task: %d \n", task.TaskId)
+			return nil
 		}
 	}
-	// 3. if not, find any reduce tasks
-	if !isAssign {
-		fmt.Println("finding a Reduce Task.... \n")
-		for _, task := range m.ReduceTasks {
-			// 4. if so
-			if task.State == "idle" {
-				task.State = "assigned"
-				reply.ReduceTask = task
-				reply.Identity = "reduce"
-				isAssign = true
-				fmt.Printf("Reduce Task Find! The number of Reduce task: %d \n", task.TaskId)
-				break
-			}
+
+	// If no idle map tasks are found, check for any idle reduce tasks
+	fmt.Println("Finding a Reduce Task.... \n")
+	for _, task := range m.ReduceTasks {
+		if task.State == Idle {
+			// Check if this reduce task has already been assigned
+			// Mark the task as assigned
+			task.State = Assigned
+			reply.ReduceTask = &task
+			reply.Identity = Reduce
+			isAssign = true
+			fmt.Printf("Reduce Task Found! The number of Reduce task: %d \n", task.TaskId)
+			return nil
 		}
 	}
 
 	if !isAssign {
-		fmt.Println("All Tasks have been assignment, wait for Done() \n")
-		reply.Identity = "exit"
+		fmt.Println("All Tasks have been assigned, wait for Done() \n")
+		reply.Identity = Exit
 	}
 
 	return nil
 }
+
 func (m *Master) UpdateDiskLocation(args *BufferArgs, reply *IsOKReply) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	reduceTaskId := args.TaskId
 	location := args.Location
 
@@ -96,24 +114,24 @@ func (m *Master) UpdateDiskLocation(args *BufferArgs, reply *IsOKReply) error {
 	// If the location doesn't exist, append it
 	if !exists {
 		m.ReduceTasks[reduceTaskId].Partition = append(m.ReduceTasks[reduceTaskId].Partition, location)
-		fmt.Printf("Now this partition is %v\n", m.ReduceTasks[reduceTaskId].Partition)
+		//fmt.Printf("Now this partition is %v\n", m.ReduceTasks[reduceTaskId].Partition)
 	}
 
 	reply.IsOK = true
 	return nil
 }
 func (m *Master) NotifyTaskProgress(args *NotificationArg, reply *IsOKReply) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 
 	taskId := args.TaskId
 	taskType := args.Identity
 	taskState := args.State
 
 	switch taskType {
-	case "map":
+	case Map:
 		m.MapTasks[taskId].State = taskState
-	case "reduce":
+	case Reduce:
 		m.ReduceTasks[taskId].State = taskState
 	default:
 		// Handle unknown task type
@@ -124,9 +142,7 @@ func (m *Master) NotifyTaskProgress(args *NotificationArg, reply *IsOKReply) err
 	return nil
 }
 
-//
 // start a thread that listens for RPCs from worker.go
-//
 func (m *Master) server() {
 	rpc.Register(m)
 	rpc.HandleHTTP()
@@ -140,17 +156,15 @@ func (m *Master) server() {
 	go http.Serve(l, nil)
 }
 
-//
 // main/mrmaster.go calls Done() periodically to find out
 // if the entire job has finished.
-//
 func (m *Master) Done() bool {
 	ret := true // Assume everything is completed by default
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 
 	for _, task := range m.MapTasks {
-		if task.State != "completed" {
+		if task.State != Done {
 			ret = false // If any map task is not completed, set ret to false
 			break
 		}
@@ -158,7 +172,7 @@ func (m *Master) Done() bool {
 
 	if ret { // Only check reduce tasks if all map tasks are completed
 		for _, task := range m.ReduceTasks {
-			if task.State != "completed" {
+			if task.State != Done {
 				ret = false // If any reduce task is not completed, set ret to false
 				break
 			}
@@ -168,39 +182,38 @@ func (m *Master) Done() bool {
 	return ret // Return the final result
 }
 func (m *Master) MapDone(args *Args, reply *IsOKReply) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	// Use a condition variable to wait for map tasks to be completed
 	for _, task := range m.MapTasks {
-		for task.State != "completed" {
+		for task.State != Done {
 			// Release the lock to allow other goroutines to acquire it
-			m.mu.Unlock()
+			m.Mu.Unlock()
 
 			// Sleep for a short duration before checking again
 			time.Sleep(100 * time.Millisecond)
 
 			// Reacquire the lock before checking the state again
-			m.mu.Lock()
+			m.Mu.Lock()
 		}
 	}
 	reply.IsOK = true
 	return nil
 }
 
-//
 // create a Master.
 // m := mr.MakeMaster(os.Args[1:], 10)
 // the cli is `go run -race mrsequential.go wc.so pg*.txt`
 // main/mrmaster.go calls this function.
 // nReduce is the number of reduce tasks to use.
-//
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
 	// get map and reduce function
 	// assign M map worker
 	// assign R reduce worker
 	// Your code here.
-	m.mu.Lock()
+	m.Mu = sync.RWMutex{}
+	m.Mu.Lock()
 	m.nMap = len(files)
 	m.nReduce = nReduce
 
@@ -208,7 +221,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 	for i, file := range files {
 		mapTask := MapTask{
 			TaskId:   i,
-			State:    "idle",
+			State:    Idle,
 			Filename: file}
 		m.MapTasks = append(m.MapTasks, mapTask)
 	}
@@ -217,13 +230,13 @@ func MakeMaster(files []string, nReduce int) *Master {
 	for i := 0; i < m.nReduce; i++ {
 		reduceTask := ReduceTask{
 			TaskId:    i,
-			State:     "idle",
-			Partition: make([]string, 0),
+			State:     Idle,
+			Partition: make([]string, 0, m.nMap),
 		}
 		m.ReduceTasks = append(m.ReduceTasks, reduceTask)
 	}
 	fmt.Printf("After Map tasks Initialization. The number of Reduce task: %d \n", len(m.ReduceTasks))
-	m.mu.Unlock()
+	m.Mu.Unlock()
 	m.server()
 	return &m
 }
