@@ -3,27 +3,44 @@ package mr
 import "os"
 import "strconv"
 
-type Args struct {
-	X int
-}
-type NotificationArg struct {
+/*
+`Worker -> Master` : Workers report the task's progress to the master
+*/
+type ReportTaskArgs struct {
+	WorkerId int
+	TaskType TaskType
 	TaskId   int
-	State    TaskState
-	Identity TaskType
 }
+type ReportTaskReply struct {
+	CanExit bool
+}
+
+/*
+`Worker -> Master` : Workers report the Reduce task's partition to the master
+*/
 type BufferArgs struct {
 	TaskId   int
 	Location string
 }
+
+/*
+`Master -> Worker` : Master assigns an idle task for workers
+*/
+type TaskArgs struct {
+	WorkerId int
+}
 type TaskReply struct {
-	Identity   TaskType
-	MapTask    *MapTask
-	ReduceTask *ReduceTask
-	NReduce    int
+	Task Task
 }
 
 type IsOKReply struct {
 	IsOK bool
+}
+type GetReduceCountArgs struct {
+}
+
+type GetReduceCountReply struct {
+	ReduceCount int
 }
 
 // Add your RPC definitions here.
